@@ -3,7 +3,7 @@ import axios from 'axios';
 const API_URL = 'http://localhost:5000/api/business';
 
 // Original synchronous search
-const searchBusinesses = async (keyword, location, token = null) => {
+const searchBusinesses = async (keyword, location, token = null, refresh = false) => {
     const headers = {};
 
     if (token) {
@@ -15,6 +15,7 @@ const searchBusinesses = async (keyword, location, token = null) => {
         {
             keyword,
             location,
+            refresh,
         },
         {
             headers,
@@ -24,7 +25,7 @@ const searchBusinesses = async (keyword, location, token = null) => {
 };
 
 // New async job-based search
-const createSearchJob = async (keyword, location, token = null) => {
+const createSearchJob = async (keyword, location, token = null, refresh = false) => {
     const headers = {};
 
     if (token) {
@@ -36,6 +37,7 @@ const createSearchJob = async (keyword, location, token = null) => {
         {
             keyword,
             location,
+            refresh,
         },
         {
             headers,
@@ -63,4 +65,17 @@ const getSearchHistory = async (limit = 5, token = null) => {
     return response.data;
 };
 
-export { searchBusinesses, createSearchJob, getJobStatus, getSearchHistory };
+const cancelJob = async (jobId, token = null) => {
+    const headers = {};
+
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await axios.delete(`${API_URL}/job/${jobId}`, {
+        headers,
+    });
+    return response.data;
+};
+
+export { searchBusinesses, createSearchJob, getJobStatus, getSearchHistory, cancelJob };

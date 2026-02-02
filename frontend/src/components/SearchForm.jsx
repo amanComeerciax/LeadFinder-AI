@@ -8,7 +8,7 @@ const searchLocations = async (query) => {
 
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
 
         const response = await fetch(
             `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1&countrycodes=in,us,uk,ae,sg,ca,au`,
@@ -135,181 +135,193 @@ const SearchForm = ({ onSearch, initialKeyword = '', initialLocation = '' }) => 
         setShowLocationSuggestions(false);
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
+    const handleSubmit = async (e, refresh = false) => {
+        if (e) e.preventDefault();
+
         if (!keyword || !location) {
             alert('Please enter both keyword and location');
             return;
         }
+
         setLoading(true);
         setShowKeywordSuggestions(false);
         setShowLocationSuggestions(false);
-        const token = isSignedIn ? await getToken() : null;
-        await onSearch(keyword, location, token);
-        setLoading(false);
+
+        try {
+            const token = isSignedIn ? await getToken() : null;
+            await onSearch(keyword, location, token, refresh);
+        } catch (error) {
+            console.error('Search error:', error);
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-white to-purple-50 dark:from-slate-900 dark:to-purple-900/20 shadow-2xl border border-purple-200 dark:border-purple-500/30 p-8 mb-8">
-            <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDE2NywgMTM5LCAyNTAsIDAuMSkiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30 dark:opacity-20 pointer-events-none"></div>
-
-            <div className="relative flex items-center gap-4 mb-8">
-                <div className="relative">
-                    <div className="absolute inset-0 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl blur-xl opacity-50"></div>
-                    <div className="relative w-14 h-14 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl flex items-center justify-center shadow-lg">
-                        <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
+        <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 relative group">
+            {/* Guest Overlay */}
+            {!isSignedIn && (
+                <div className="absolute inset-0 z-50 bg-slate-950/40 backdrop-blur-[2px] rounded-xl flex items-center justify-center p-6 border border-slate-700/50 group-hover:bg-slate-950/20 transition-all duration-500">
+                    <div className="text-center">
+                        <div className="inline-flex items-center justify-center w-12 h-12 bg-slate-800 rounded-full mb-3 border border-slate-700 shadow-xl">
+                            <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                            </svg>
+                        </div>
+                        <h3 className="text-white font-bold text-lg mb-1">Login Required</h3>
+                        <p className="text-slate-400 text-sm mb-4">Please sign in to start generating leads.</p>
                     </div>
                 </div>
-                <div>
-                    <h2 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 dark:from-purple-400 dark:to-pink-400 bg-clip-text text-transparent">
-                        Search Businesses
-                    </h2>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Find leads with AI-powered search</p>
-                </div>
-            </div>
+            )}
 
-            <form onSubmit={handleSubmit} className="relative space-y-6">
-                <div className="relative" ref={keywordInputRef}>
-                    <label htmlFor="keyword" className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                        What are you looking for?
-                    </label>
-                    <div className="relative group">
+            <form onSubmit={(e) => handleSubmit(e)}>
+                <div className={`flex flex-col lg:flex-row gap-3 ${!isSignedIn ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
+                    {/* Keyword Input */}
+                    <div className="relative flex-1" ref={keywordInputRef}>
+                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                        </div>
                         <input
                             type="text"
                             id="keyword"
                             value={keyword}
+                            disabled={!isSignedIn}
                             onChange={(e) => handleKeywordChange(e.target.value)}
                             onFocus={() => keyword.length > 0 && setShowKeywordSuggestions(true)}
-                            placeholder="e.g., restaurants, hotels, cafes"
-                            className="w-full px-5 py-4 pl-14 border-2 border-gray-200 dark:border-gray-600 dark:bg-gray-800/50 dark:text-white rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all text-gray-700 placeholder-gray-400 dark:placeholder-gray-500 shadow-sm group-hover:shadow-md"
+                            placeholder="Business type (restaurants, gyms...)"
+                            className="w-full pl-10 pr-10 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-slate-500 transition-colors"
                             autoComplete="off"
                         />
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center">
-                            <svg className="w-5 h-5 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                            </svg>
-                        </div>
-                    </div>
-                    {showKeywordSuggestions && keywordSuggestions.length > 0 && (
-                        <div className="absolute z-20 w-full mt-2 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                            {keywordSuggestions.map((suggestion, index) => (
-                                <div
-                                    key={index}
-                                    onClick={() => selectKeywordSuggestion(suggestion)}
-                                    className="px-5 py-3 hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer text-gray-700 dark:text-gray-300 transition-all flex items-center gap-3 border-b border-gray-100 dark:border-gray-700 last:border-0"
-                                >
-                                    <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                                    </svg>
-                                    <span className="font-medium">{suggestion}</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                <div className="relative" ref={locationInputRef}>
-                    <label htmlFor="location" className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
-                        Where?
-                        {isLoadingLocations && (
-                            <svg className="animate-spin h-4 w-4 text-purple-600" fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
+                        {keyword && isSignedIn && (
+                            <button
+                                type="button"
+                                onClick={() => setKeyword('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white transition-colors"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
                         )}
-                    </label>
-                    <div className="relative group">
-                        <input
-                            type="text"
-                            id="location"
-                            value={location}
-                            onChange={(e) => handleLocationChange(e.target.value)}
-                            onFocus={() => location.length >= 3 && setShowLocationSuggestions(true)}
-                            placeholder="Type any location (city, area, zipcode...)"
-                            className="w-full px-5 py-4 pl-14 border-2 border-gray-200 dark:border-gray-600 dark:bg-gray-800/50 dark:text-white rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all text-gray-700 placeholder-gray-400 dark:placeholder-gray-500 shadow-sm group-hover:shadow-md"
-                            autoComplete="off"
-                        />
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-pink-100 dark:bg-pink-900/30 rounded-lg flex items-center justify-center">
-                            <svg className="w-5 h-5 text-pink-600 dark:text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        {showKeywordSuggestions && keywordSuggestions.length > 0 && (
+                            <div className="absolute z-50 left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                                {keywordSuggestions.map((suggestion, index) => (
+                                    <div
+                                        key={index}
+                                        onClick={() => selectKeywordSuggestion(suggestion)}
+                                        className="px-4 py-2.5 hover:bg-slate-700 cursor-pointer text-slate-300 text-sm flex items-center gap-2 border-b border-slate-700/50 last:border-0"
+                                    >
+                                        <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                        </svg>
+                                        {suggestion}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Location Input */}
+                    <div className="relative flex-1" ref={locationInputRef}>
+                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                             </svg>
                         </div>
-                    </div>
-                    {showLocationSuggestions && locationSuggestionsState.length > 0 && (
-                        <div className="absolute z-20 w-full mt-2 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden max-h-80 overflow-y-auto">
-                            {locationSuggestionsState.map((suggestion, index) => (
-                                <div
-                                    key={index}
-                                    onClick={() => selectLocationSuggestion(suggestion)}
-                                    className="px-5 py-3 hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer transition-all border-b border-gray-100 dark:border-gray-700 last:border-0"
-                                >
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="flex items-start gap-3 flex-1 min-w-0">
-                                            <svg className="w-5 h-5 text-purple-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                            </svg>
-                                            <div className="flex-1 min-w-0">
-                                                {suggestion.city && (
-                                                    <div className="font-semibold text-gray-800 dark:text-gray-200">
-                                                        {suggestion.city}{suggestion.state && `, ${suggestion.state}`}
-                                                    </div>
-                                                )}
-                                                <div className="text-sm text-gray-500 dark:text-gray-400 mt-1 truncate">
-                                                    {suggestion.displayName}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        {suggestion.postcode !== 'N/A' && (
-                                            <div className="flex items-center gap-1.5 px-3 py-1 bg-purple-100 dark:bg-purple-900/30 rounded-md flex-shrink-0">
-                                                <svg className="w-3 h-3 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                                                </svg>
-                                                <span className="text-xs font-mono font-semibold text-purple-700 dark:text-purple-300">
-                                                    {suggestion.postcode}
-                                                </span>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                    {showLocationSuggestions && locationSuggestionsState.length === 0 && !isLoadingLocations && location.length >= 3 && (
-                        <div className="absolute z-20 w-full mt-2 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 p-4 text-center text-gray-500 dark:text-gray-400 text-sm">
-                            No locations found. Try a different search.
-                        </div>
-                    )}
-                </div>
-
-                <button
-                    type="submit"
-                    disabled={loading}
-                    className="relative w-full overflow-hidden group"
-                >
-                    <div className="absolute inset-0 bg-gradient-to-r from-purple-600 via-pink-600 to-purple-600 opacity-100 group-hover:opacity-90 transition-opacity rounded-xl"></div>
-                    <div className="absolute inset-0 bg-gradient-to-r from-purple-600 to-pink-600 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl blur-lg"></div>
-                    <div className="relative px-6 py-4 text-white font-semibold text-lg shadow-xl flex items-center justify-center gap-3">
-                        {loading ? (
-                            <>
-                                <svg className="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
+                        <input
+                            type="text"
+                            id="location"
+                            value={location}
+                            disabled={!isSignedIn}
+                            onChange={(e) => handleLocationChange(e.target.value)}
+                            onFocus={() => location.length >= 3 && setShowLocationSuggestions(true)}
+                            placeholder="City, area, or zip code"
+                            className="w-full pl-10 pr-10 py-3 bg-slate-800/50 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-slate-500 transition-colors"
+                            autoComplete="off"
+                        />
+                        {isLoadingLocations && (
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                <svg className="animate-spin h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                 </svg>
-                                Searching...
-                            </>
-                        ) : (
-                            <>
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </div>
+                        )}
+                        {location && !isLoadingLocations && isSignedIn && (
+                            <button
+                                type="button"
+                                onClick={() => setLocation('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white transition-colors"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                 </svg>
-                                Search Businesses
-                            </>
+                            </button>
+                        )}
+                        {showLocationSuggestions && locationSuggestionsState.length > 0 && (
+                            <div className="absolute z-50 left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
+                                {locationSuggestionsState.map((suggestion, index) => (
+                                    <div
+                                        key={index}
+                                        onClick={() => selectLocationSuggestion(suggestion)}
+                                        className="px-4 py-2.5 hover:bg-slate-700 cursor-pointer border-b border-slate-700/50 last:border-0"
+                                    >
+                                        <div className="flex items-start gap-2">
+                                            <svg className="w-4 h-4 text-slate-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                            </svg>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm text-white font-medium truncate">
+                                                    {suggestion.city || suggestion.displayName?.split(',')[0]}
+                                                </p>
+                                                <p className="text-xs text-slate-400 truncate">
+                                                    {suggestion.state}, {suggestion.country}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
                         )}
                     </div>
-                </button>
+
+                    <div className="flex gap-2">
+                        {/* Search Button */}
+                        <button
+                            type="submit"
+                            disabled={loading || !isSignedIn}
+                            className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 whitespace-nowrap"
+                        >
+                            {loading && !showLocationSuggestions ? (
+                                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                            ) : (
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                </svg>
+                            )}
+                            <span>Search</span>
+                        </button>
+
+                        {/* Force Refresh Button */}
+                        <button
+                            type="button"
+                            onClick={(e) => handleSubmit(e, true)}
+                            disabled={loading || !isSignedIn}
+                            title="Force refresh (ignore cache)"
+                            className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-lg transition-all flex items-center justify-center"
+                        >
+                            <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
             </form>
         </div>
     );

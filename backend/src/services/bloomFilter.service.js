@@ -6,7 +6,6 @@ class BloomFilterService {
     constructor() {
         // Create a Bloom Filter backed by optimal size for ~100k items
         // Size = 2,000,000 bits (approx 250KB), Hashes = 7
-        this.urlFilter = new BloomFilter(2000000, 7);
         this.placeIdFilter = new BloomFilter(2000000, 7);
         this.redis = connection;
         this.isLoaded = false;
@@ -17,13 +16,7 @@ class BloomFilterService {
 
         try {
             // Try to load from Redis
-            const urlFilterData = await this.redis.get('bloom:url_filter');
             const placeIdFilterData = await this.redis.get('bloom:place_id_filter');
-
-            if (urlFilterData) {
-                const parsedUrl = JSON.parse(urlFilterData);
-                this.urlFilter = BloomFilter.fromJSON(parsedUrl);
-            }
 
             if (placeIdFilterData) {
                 const parsedPlaceId = JSON.parse(placeIdFilterData);
@@ -31,45 +24,20 @@ class BloomFilterService {
             }
 
             this.isLoaded = true;
-            console.log('✅ Bloom Filters loaded from Redis');
+            console.log('✅ Bloom Filter loaded from Redis');
         } catch (error) {
-            console.error('❌ Failed to load Bloom Filters:', error);
-            // Continue with empty filters if load fails
+            console.error('❌ Failed to load Bloom Filter:', error);
+            // Continue with empty filter if load fails
             this.isLoaded = true;
         }
     }
 
     async save() {
         try {
-            await this.redis.set('bloom:url_filter', JSON.stringify(this.urlFilter.saveAsJSON()));
             await this.redis.set('bloom:place_id_filter', JSON.stringify(this.placeIdFilter.saveAsJSON()));
         } catch (error) {
-            console.error('❌ Failed to save Bloom Filters:', error);
+            console.error('❌ Failed to save Bloom Filter:', error);
         }
-    }
-
-    async shouldCrawl(url) {
-        await this.init();
-        if (!url || url === 'N/A') return false;
-
-        // Normalizing URL for check
-        // Remove protocol and trailing slash for consistent checking
-        const normalizedUrl = url.replace(/(^\w+:|^)\/\//, '').replace(/\/$/, '').toLowerCase();
-
-        if (this.urlFilter.has(normalizedUrl)) {
-            return false; // Skip crawling
-        }
-        return true; // Should crawl
-    }
-
-    async addCrawled(url) {
-        await this.init();
-        if (!url || url === 'N/A') return;
-
-        const normalizedUrl = url.replace(/(^\w+:|^)\/\//, '').replace(/\/$/, '').toLowerCase();
-        this.urlFilter.add(normalizedUrl);
-        // Save periodically or after add (debouncing could be improved here but simple save is fine for now)
-        await this.save();
     }
 
     async shouldProcess(placeId) {
@@ -88,6 +56,68 @@ class BloomFilterService {
 
         this.placeIdFilter.add(placeId);
         await this.save();
+    }
+
+    /**
+     * Atomic check-and-add operation to prevent race conditions
+     * Checks if a place_id exists and adds it if not in one operation
+     * @param {string} placeId - The place_id to check and add
+     * @returns {Promise<boolean>} - true if should process (new), false if duplicate
+     */
+    async checkAndAdd(placeId) {
+        await this.init();
+
+        // Always process if no ID
+        if (!placeId) return true;
+
+        // Check if already exists
+        const exists = this.placeIdFilter.has(placeId);
+
+        if (exists) {
+            return false; // Skip - already processed
+        }
+
+        // Add to filter and save atomically
+        this.placeIdFilter.add(placeId);
+        await this.save();
+
+        return true; // Should process - newly added
+    }
+
+    /**
+     * Batch check multiple place_ids at once for better performance
+     * @param {string[]} placeIds - Array of place_ids to check
+     * @returns {Promise<boolean[]>} - Array of booleans indicating which should be processed
+     */
+    async batchCheckAndAdd(placeIds) {
+        await this.init();
+
+        const results = [];
+        let hasChanges = false;
+
+        for (const placeId of placeIds) {
+            if (!placeId) {
+                results.push(true);
+                continue;
+            }
+
+            const exists = this.placeIdFilter.has(placeId);
+
+            if (exists) {
+                results.push(false);
+            } else {
+                this.placeIdFilter.add(placeId);
+                results.push(true);
+                hasChanges = true;
+            }
+        }
+
+        // Save once after all additions
+        if (hasChanges) {
+            await this.save();
+        }
+
+        return results;
     }
 }
 

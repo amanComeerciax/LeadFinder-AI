@@ -97,12 +97,12 @@ const SearchGlobe = ({ currentSearchLocation = null }) => {
         return (
             <div className="relative w-full flex items-center justify-center" style={{ height: '600px' }}>
                 <div className="text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 mb-4 rounded-full bg-slate-600/20 animate-pulse">
-                        <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="inline-flex items-center justify-center w-16 h-16 mb-4 rounded-full bg-purple-500/20 animate-pulse">
+                        <svg className="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                     </div>
-                    <p className="text-slate-700 dark:text-slate-400 font-medium">Loading Map...</p>
+                    <p className="text-purple-600 dark:text-purple-400 font-medium">Loading Map...</p>
                 </div>
             </div>
         );
@@ -111,7 +111,7 @@ const SearchGlobe = ({ currentSearchLocation = null }) => {
     return (
         <div className="relative w-full" style={{ height: '600px' }}>
             {/* Header badge */}
-            <div className="absolute top-4 left-4 z-10 bg-gradient-to-r from-slate-700/90 to-slate-600/90 backdrop-blur-md rounded-xl px-4 py-2 shadow-2xl border border-white/20">
+            <div className="absolute top-4 left-4 z-10 bg-gradient-to-r from-purple-600/90 to-pink-600/90 backdrop-blur-md rounded-xl px-4 py-2 shadow-2xl border border-white/20">
                 <div className="flex items-center gap-3">
                     <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
                         <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -132,7 +132,7 @@ const SearchGlobe = ({ currentSearchLocation = null }) => {
             </div>
 
             {/* World Map SVG */}
-            <div className="relative w-full h-full rounded-2xl overflow-hidden bg-gradient-to-b from-slate-950 via-slate-950 to-slate-950 p-8">
+            <div className="relative w-full h-full rounded-2xl overflow-hidden bg-gradient-to-b from-slate-950 via-purple-950 to-slate-950 p-8">
                 <svg
                     viewBox="0 0 800 400"
                     className="w-full h-full"
@@ -238,14 +238,14 @@ const SearchGlobe = ({ currentSearchLocation = null }) => {
             </div>
 
             {/* Legend */}
-            <div className="absolute bottom-4 left-4 z-10 bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-md rounded-xl p-4 border border-slate-600/30 shadow-2xl">
+            <div className="absolute bottom-4 left-4 z-10 bg-gradient-to-br from-slate-900/90 to-purple-900/90 backdrop-blur-md rounded-xl p-4 border border-purple-500/30 shadow-2xl">
                 <div className="space-y-3">
                     <div className="flex items-center gap-3">
-                        <div className="w-3 h-3 rounded-full bg-slate-600 shadow-lg shadow-slate-600/50"></div>
-                        <span className="text-sm font-medium text-slate-400">Other Searches</span>
+                        <div className="w-3 h-3 rounded-full bg-purple-500 shadow-lg shadow-purple-500/50"></div>
+                        <span className="text-sm font-medium text-purple-200">Other Searches</span>
                     </div>
                     <div className="flex items-center gap-3">
-                        <div className="w-4 h-4 rounded-full bg-slate-500 animate-pulse shadow-lg shadow-slate-500/50"></div>
+                        <div className="w-4 h-4 rounded-full bg-pink-500 animate-pulse shadow-lg shadow-pink-500/50"></div>
                         <span className="text-sm font-medium text-pink-200">Your Search</span>
                     </div>
                 </div>

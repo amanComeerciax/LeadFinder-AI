@@ -9,7 +9,7 @@ const SearchHistory = ({ onSelectHistory }) => {
 
     useEffect(() => {
         fetchHistory();
-    }, [isSignedIn]); // Re-fetch when sign-in status changes
+    }, [isSignedIn]);
 
     const fetchHistory = async () => {
         try {
@@ -27,66 +27,80 @@ const SearchHistory = ({ onSelectHistory }) => {
 
     if (loading) {
         return (
-            <div className="glass-effect dark:bg-gray-800/90 rounded-xl p-6 animate-pulse">
-                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-4"></div>
-                <div className="space-y-3">
-                    <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                    <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                </div>
+            <div className="space-y-2">
+                {[1, 2, 3].map((i) => (
+                    <div key={i} className="animate-pulse">
+                        <div className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+                            <div className="w-10 h-10 rounded-lg bg-gray-200 dark:bg-gray-700" />
+                            <div className="flex-1 space-y-2">
+                                <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-2/3" />
+                                <div className="h-2 bg-gray-100 dark:bg-gray-800 rounded w-1/3" />
+                            </div>
+                        </div>
+                    </div>
+                ))}
             </div>
         );
     }
 
-    // Don't show if no history or user is not signed in
     if (history.length === 0 || !isSignedIn) {
-        return null;
+        return (
+            <div className="text-center py-6">
+                <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                    <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">No recent searches</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Your history will appear here</p>
+            </div>
+        );
     }
 
     return (
-        <div className="glass-effect dark:bg-gray-800/90 rounded-xl p-6 mb-8">
-            <div className="flex items-center gap-2 mb-4">
-                <svg className="w-5 h-5 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <h3 className="text-lg font-semibold text-gray-800 dark:text-white">Your Recent Searches</h3>
-            </div>
-            <div className="space-y-2">
-                {history.map((item, index) => (
-                    <div
-                        key={index}
-                        onClick={() => onSelectHistory(item.keyword, item.location)}
-                        className="flex items-center justify-between p-3 rounded-lg hover:bg-purple-50 dark:hover:bg-gray-700 cursor-pointer transition-colors group"
-                    >
-                        <div className="flex items-center gap-3 flex-1">
-                            <div className="w-10 h-10 bg-gradient-to-r from-purple-100 to-indigo-100 dark:from-purple-900/30 dark:to-indigo-900/30 rounded-lg flex items-center justify-center">
-                                <svg className="w-5 h-5 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                </svg>
-                            </div>
-                            <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span className="font-medium text-gray-800 dark:text-gray-200">{item.keyword}</span>
-                                    <span className="text-gray-400 dark:text-gray-500">in</span>
-                                    <span className="font-medium text-gray-600 dark:text-gray-300">{item.location}</span>
-                                </div>
-                                <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                                    <span className="flex items-center gap-1">
-                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                                        </svg>
-                                        {item.resultsCount} results
-                                    </span>
-                                    <span>•</span>
-                                    <span>{new Date(item.createdAt).toLocaleDateString()}</span>
-                                </div>
-                            </div>
-                        </div>
-                        <svg className="w-5 h-5 text-gray-400 dark:text-gray-500 group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        <div className="space-y-1">
+            {history.map((item, index) => (
+                <div
+                    key={index}
+                    onClick={() => onSelectHistory(item.keyword, item.location)}
+                    className="group flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-800/20 transition-colors"
+                >
+                    {/* Icon */}
+                    <div className="w-10 h-10 bg-gray-100 dark:bg-gray-800 group-hover:bg-slate-800 dark:group-hover:bg-slate-800/30 rounded-lg flex items-center justify-center transition-colors">
+                        <svg className="w-4 h-4 text-gray-500 group-hover:text-slate-700 dark:group-hover:text-slate-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
                     </div>
-                ))}
-            </div>
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                            <span className="font-medium text-gray-900 dark:text-white text-sm truncate">
+                                {item.keyword}
+                            </span>
+                            <span className="text-gray-400">•</span>
+                            <span className="text-gray-500 dark:text-gray-400 text-sm truncate">
+                                {item.location}
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-gray-400">
+                            <span className="text-slate-700 dark:text-slate-400 font-medium">{item.resultsCount} leads</span>
+                            <span>•</span>
+                            <span>
+                                {new Date(item.createdAt).toLocaleDateString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric'
+                                })}
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Arrow */}
+                    <svg className="w-4 h-4 text-gray-400 group-hover:text-slate-700 dark:group-hover:text-slate-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                </div>
+            ))}
         </div>
     );
 };

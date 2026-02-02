@@ -2,10 +2,15 @@ import { Worker } from 'bullmq';
 import { connection } from '../config/queue.js';
 import { searchBusinesses } from '../services/googleMaps.service.js';
 import { extractContacts } from '../services/websiteScraper.service.js';
-import { bloomFilterService } from '../services/bloomFilter.service.js';
 import Business from '../models/Business.model.js';
 import SearchHistory from '../models/SearchHistory.model.js';
 import Job from '../models/Job.model.js';
+
+// Import io - will be set after server initialization
+let io = null;
+export const setSocketIO = (socketIO) => {
+    io = socketIO;
+};
 
 const searchWorker = new Worker(
     'business-search',
@@ -20,50 +25,92 @@ const searchWorker = new Worker(
 
             await job.updateProgress(10);
 
+            // Emit job started event
+            if (io) {
+                io.emit('job:started', {
+                    jobId,
+                    keyword,
+                    location,
+                    timestamp: new Date()
+                });
+            }
+
             // Step 1: Scrape Google Maps
             const rawBusinesses = await searchBusinesses(keyword, location);
 
-            // Filter out already processed businesses using Bloom Filter (Place ID)
-            const businesses = [];
-            for (const business of rawBusinesses) {
-                if (business.place_id && await bloomFilterService.shouldProcess(business.place_id)) {
-                    businesses.push(business);
-                    await bloomFilterService.addProcessed(business.place_id);
-                } else if (!business.place_id) {
-                    // If no place_id, we process it anyway (rare case)
-                    businesses.push(business);
-                }
-            }
+            // Use all businesses directly (no Bloom filter)
+            const businesses = rawBusinesses;
 
-            console.log(`Bloom Filter: Skipped ${rawBusinesses.length - businesses.length} duplicate businesses.`);
+            console.log(`Total businesses fetched: ${businesses.length}`);
 
             await job.updateProgress(40);
             await Job.findOneAndUpdate({ jobId }, { progress: 40 });
 
-            // Step 2: Enrich with Emails & Social Links
-            // Process in chunks to limit concurrency (Puppeteer is heavy)
-            const chunkSize = 5;
+            // Emit progress event
+            if (io) {
+                io.emit('job:progress', {
+                    jobId,
+                    progress: 40,
+                    current: businesses.length,
+                    total: businesses.length,
+                    message: 'Starting enrichment...'
+                });
+            }
+
+            // Step 2: Deep Scan Websites for Emails & Social Links
+            // Using Puppeteer-based deep scanning on first search for better results
+            const chunkSize = 3; // Reduced from 5 to handle Puppeteer load better
             const enrichedBusinesses = [];
+
+            console.log(`🔍 Starting DEEP SCAN for ${businesses.length} businesses (including subpages)...`);
 
             for (let i = 0; i < businesses.length; i += chunkSize) {
                 const chunk = businesses.slice(i, i + chunkSize);
-                // console.log(`Processing chunk ${i/chunkSize + 1} of ${Math.ceil(businesses.length/chunkSize)}`);
+                const currentProgress = 40 + Math.floor((i / businesses.length) * 50); // Extended to 50% for deep scan
+
+                await job.updateProgress(currentProgress);
+                await Job.findOneAndUpdate({ jobId }, { progress: currentProgress });
+
+                // Emit progress event with deep scan info
+                if (io) {
+                    io.emit('job:progress', {
+                        jobId,
+                        progress: currentProgress,
+                        current: Math.min(i + chunkSize, businesses.length),
+                        total: businesses.length,
+                        message: `🔍 Deep scanning ${i + 1}-${Math.min(i + chunkSize, businesses.length)} (checking subpages for emails)...`
+                    });
+                }
 
                 const chunkResults = await Promise.all(
                     chunk.map(async (business) => {
                         if (business.website && business.website !== 'N/A') {
-                            // Check Bloom Filter for URL before crawling
-                            if (await bloomFilterService.shouldCrawl(business.website)) {
-                                try {
-                                    const contacts = await extractContacts(business.website);
-                                    await bloomFilterService.addCrawled(business.website);
-                                    return { ...business, ...contacts };
-                                } catch (e) {
-                                    console.error(`Failed to enrich ${business.website}:`, e.message);
-                                    return business;
-                                }
-                            } else {
-                                console.log(`Bloom Filter: Skipped crawling ${business.website}`);
+                            try {
+                                console.log(`[Worker] 🔍 Deep Scanning: ${business.name} (${business.website})`);
+                                // extractContacts already does deep scanning with Puppeteer
+                                // It crawls homepage + /contact, /about, /team, etc.
+                                const contacts = await extractContacts(business.website);
+
+                                // Properly merge socialLinks into business object
+                                return {
+                                    ...business,
+                                    email: contacts.email || business.email || null,
+                                    socialLinks: {
+                                        facebook: contacts.socialLinks?.facebook || null,
+                                        twitter: contacts.socialLinks?.twitter || null,
+                                        linkedin: contacts.socialLinks?.linkedin || null,
+                                        instagram: contacts.socialLinks?.instagram || null,
+                                        youtube: contacts.socialLinks?.youtube || null,
+                                    },
+                                    // Also add flat fields for easier frontend access
+                                    facebookUrl: contacts.socialLinks?.facebook || null,
+                                    twitterUrl: contacts.socialLinks?.twitter || null,
+                                    linkedinUrl: contacts.socialLinks?.linkedin || null,
+                                    instagramUrl: contacts.socialLinks?.instagram || null,
+                                    youtubeUrl: contacts.socialLinks?.youtube || null,
+                                };
+                            } catch (e) {
+                                console.error(`[Worker] Failed to deep scan ${business.name}:`, e.message);
                                 return business;
                             }
                         }
@@ -73,41 +120,62 @@ const searchWorker = new Worker(
                 enrichedBusinesses.push(...chunkResults);
             }
 
-            await job.updateProgress(70);
-            await Job.findOneAndUpdate({ jobId }, { progress: 70 });
+            await job.updateProgress(90);
+            await Job.findOneAndUpdate({ jobId }, { progress: 90 });
+
+            // Emit progress event
+            if (io) {
+                io.emit('job:progress', {
+                    jobId,
+                    progress: 70,
+                    message: 'Saving to database...'
+                });
+            }
 
             // Step 3: Save to Database
-            // Use insertMany with ordered: false to ignore duplicate key errors if any slip through
-            // But bloom filter should catch most
-            let savedBusinesses = [];
+            // Use bulkWrite with upsert: true to update existing or insert new ones
+            // This handles duplicate key errors gracefully without needing a Bloom filter
+            let savedCount = 0;
             if (enrichedBusinesses.length > 0) {
                 try {
-                    savedBusinesses = await Business.insertMany(enrichedBusinesses, { ordered: false });
+                    // Deduplicate businesses by place_id within the local array to prevent race conditions during bulk upsert
+                    const uniqueBusinesses = Array.from(
+                        new Map(enrichedBusinesses.map(b => [b.place_id, b])).values()
+                    ).filter(b => b.place_id);
+
+                    const bulkOps = uniqueBusinesses.map(business => ({
+                        updateOne: {
+                            filter: { place_id: business.place_id },
+                            update: { $set: business },
+                            upsert: true
+                        }
+                    }));
+
+                    const result = await Business.bulkWrite(bulkOps, { ordered: false });
+                    savedCount = (result.upsertedCount || 0) + (result.modifiedCount || 0);
+                    console.log(`Bulk write successful. Upserted: ${result.upsertedCount}, Modified: ${result.modifiedCount}`);
                 } catch (e) {
-                    // If some inserted, they are in e.insertedDocs (for older mongoose) or we can just ignore duplicates
-                    // Mongoose insertMany throws if some fail, but saves the successful ones if ordered: false
-                    // In Mongoose 6+, it returns the inserted docs even on error if we handle it right, 
-                    // or we can just re-fetch or assume success for this flow.
-                    // A simple way is to catch and ignore, assuming duplicates were the cause.
-                    if (e.writeErrors) {
-                        // Some docs inserted, some failed. 
-                        // e.insertedDocs often contains the successes.
-                        savedBusinesses = e.insertedDocs || [];
-                    } else {
-                        // All failed or other error
-                        console.error("Bulk insert partial error:", e.message);
-                    }
+                    console.error("Bulk write error:", e.message);
                 }
             }
 
             await job.updateProgress(90);
             await Job.findOneAndUpdate({ jobId }, { progress: 90 });
 
+            // Emit progress event
+            if (io) {
+                io.emit('job:progress', {
+                    jobId,
+                    progress: 90,
+                    message: 'Finalizing...'
+                });
+            }
+
             await SearchHistory.create({
                 userId,
                 keyword,
                 location,
-                resultsCount: savedBusinesses.length,
+                resultsCount: savedCount,
             });
 
             await job.updateProgress(100);
@@ -116,15 +184,24 @@ const searchWorker = new Worker(
                 {
                     status: 'completed',
                     progress: 100,
-                    resultsCount: savedBusinesses.length,
+                    resultsCount: savedCount,
                     completedAt: new Date(),
                 }
             );
 
+            // Emit job completed event
+            if (io) {
+                io.emit('job:completed', {
+                    jobId,
+                    resultsCount: savedCount,
+                    data: enrichedBusinesses
+                });
+            }
+
             return {
                 success: true,
-                count: savedBusinesses.length,
-                data: savedBusinesses,
+                count: savedCount,
+                data: enrichedBusinesses,
             };
         } catch (error) {
             await Job.findOneAndUpdate(
@@ -134,12 +211,23 @@ const searchWorker = new Worker(
                     error: error.message,
                 }
             );
+
+            // Emit job failed event
+            if (io) {
+                io.emit('job:failed', {
+                    jobId,
+                    error: error.message
+                });
+            }
+
             throw error;
         }
     },
     {
         connection,
         concurrency: 5,
+        lockDuration: 600000, // 10 minutes (increased from default 30s to handle long email scraping)
+        lockRenewTime: 30000,  // Renew lock every 30 seconds to keep job active
     }
 );
 
