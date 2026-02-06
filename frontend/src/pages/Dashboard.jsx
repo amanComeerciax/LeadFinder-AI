@@ -9,9 +9,10 @@
 // import BusinessTable from '../components/BusinessTable';
 // import BusinessMap from '../components/BusinessMap';
 // import ExportButtons from '../components/ExportButtons';
+// import { searchBusinesses, createSearchJob } from '../api/business.api';
 // import JobStatus from '../components/JobStatus';
 // import DeepScanButton from '../components/DeepScanButton';
-// import { searchBusinesses, createSearchJob } from '../api/business.api';
+// import { searchBusinesses, createSearchJob, createTwoPhaseSearchJob, pauseEnrichment, resumeEnrichment, skipEnrichment } from '../api/business.api';
 
 // const Dashboard = () => {
 //     const { user, isSignedIn } = useUser();
@@ -827,14 +828,6 @@
 //                                         </div>
 //                                     )}
 
-//                                     <div className="grid grid-cols-2 gap-4 pt-4">
-//                                         {selectedBusiness.priceLevel && (
-//                                             <div>
-//                                                 <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Price</p>
-//                                                 <p className="text-lg font-bold text-zinc-900 dark:text-white">{selectedBusiness.priceLevel}</p>
-//                                             </div>
-//                                         )}
-
 //                                         {selectedBusiness.isOpenNow !== undefined && (
 //                                             <div>
 //                                                 <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Status</p>
@@ -876,7 +869,8 @@
 
 
 import { useState, useEffect, useRef } from 'react';
-import { useUser, UserButton, SignInButton, SignUpButton } from '@clerk/clerk-react';
+import { useUser, useAuth, UserButton, SignInButton, SignUpButton } from '@clerk/clerk-react';
+import ActiveJobs from '../components/ActiveJobs';
 import { useTheme } from '../context/ThemeContext';
 import { useSocket } from '../context/SocketContext';
 import SearchForm from '../components/SearchForm';
@@ -886,10 +880,11 @@ import BusinessMap from '../components/BusinessMap';
 import ExportButtons from '../components/ExportButtons';
 import JobStatus from '../components/JobStatus';
 import DeepScanButton from '../components/DeepScanButton';
-import { searchBusinesses, createSearchJob } from '../api/business.api';
+import { searchBusinesses, createSearchJob, createTwoPhaseSearchJob, pauseEnrichment, resumeEnrichment, skipEnrichment } from '../api/business.api';
 
 const Dashboard = () => {
     const { user, isSignedIn } = useUser();
+    const { getToken } = useAuth();
     const { isDark, toggleTheme } = useTheme();
     const { socket } = useSocket();
     const [businesses, setBusinesses] = useState([]);
@@ -909,6 +904,10 @@ const Dashboard = () => {
     const [priceRange, setPriceRange] = useState('all');
     const [openNow, setOpenNow] = useState(false);
     const [showRecentSearches, setShowRecentSearches] = useState(false);
+    const [useTwoPhaseSearch, setUseTwoPhaseSearch] = useState(true); // Enable two-phase search by default
+    const [currentPhase, setCurrentPhase] = useState(null); // 'collecting', 'enriching', 'completed'
+    const [isEnrichmentPaused, setIsEnrichmentPaused] = useState(false);
+    const [usePostalCodes, setUsePostalCodes] = useState(false);
     const recentSearchesRef = useRef(null);
 
     useEffect(() => {
@@ -942,6 +941,10 @@ const Dashboard = () => {
         };
 
         const handleJobCompleted = (data) => {
+            console.log('🎯 [handleJobCompleted] Received data:', data);
+            console.log('🎯 [handleJobCompleted] Current Job ID:', currentJobId);
+            console.log('🎯 [handleJobCompleted] Match?', data.jobId === currentJobId);
+
             setActiveJobs(prev =>
                 prev.map(job =>
                     job.jobId === data.jobId
@@ -952,7 +955,16 @@ const Dashboard = () => {
 
             // If the completed job is the currently active tab, update businesses display
             if (data.jobId === currentJobId) {
-                setBusinesses(data.data);
+                console.log('✅ Setting businesses:', data.data?.length, 'items');
+                setBusinesses(data.data || []);
+            } else {
+                console.log('⚠️ Job ID mismatch - not updating display');
+                console.log('⚠️ But setting businesses anyway for cached results');
+                // For cached results, always show data regardless of currentJobId
+                if (data.cached) {
+                    setBusinesses(data.data || []);
+                    setCurrentJobId(data.jobId);
+                }
             }
         };
 
@@ -977,15 +989,87 @@ const Dashboard = () => {
         };
     }, [socket, multiSearchMode, currentJobId]);
 
+    // Socket event listeners for two-phase search
+    useEffect(() => {
+        if (!socket || !useTwoPhaseSearch) return;
+
+        const handlePhaseStarted = (data) => {
+            console.log('[Socket] Phase started:', data);
+            setCurrentPhase(data.phase);
+        };
+
+        const handlePhaseCompleted = (data) => {
+            console.log('[Socket] Phase completed:', data);
+            if (data.phase === 'collecting' && data.jobId === currentJobId) {
+                // Phase 1 complete - show businesses immediately
+                setBusinesses(data.data || []);
+                setCurrentPhase('enriching');
+            }
+        };
+
+        const handleCollectionProgress = (data) => {
+            if (data.jobId === currentJobId) {
+                console.log('[Socket] Collection progress:', data.progress);
+            }
+        };
+
+        const handleEnrichmentProgress = (data) => {
+            if (data.jobId === currentJobId) {
+                console.log('[Socket] Enrichment progress:', data);
+            }
+        };
+
+        const handleBusinessEnriched = (data) => {
+            if (data.jobId === currentJobId) {
+                // Update individual business in the list
+                setBusinesses(prev =>
+                    (prev || []).map(b =>
+                        b.place_id === data.business.place_id ? data.business : b
+                    )
+                );
+            }
+        };
+
+        const handleJobPaused = (data) => {
+            if (data.jobId === currentJobId) {
+                setIsEnrichmentPaused(true);
+            }
+        };
+
+        const handleJobResumed = (data) => {
+            if (data.jobId === currentJobId) {
+                setIsEnrichmentPaused(false);
+            }
+        };
+
+        socket.on('job:phase:started', handlePhaseStarted);
+        socket.on('job:phase:completed', handlePhaseCompleted);
+        socket.on('job:collection:progress', handleCollectionProgress);
+        socket.on('job:enrichment:progress', handleEnrichmentProgress);
+        socket.on('job:business:enriched', handleBusinessEnriched);
+        socket.on('job:paused', handleJobPaused);
+        socket.on('job:resumed', handleJobResumed);
+
+        return () => {
+            socket.off('job:phase:started', handlePhaseStarted);
+            socket.off('job:phase:completed', handlePhaseCompleted);
+            socket.off('job:collection:progress', handleCollectionProgress);
+            socket.off('job:enrichment:progress', handleEnrichmentProgress);
+            socket.off('job:business:enriched', handleBusinessEnriched);
+            socket.off('job:paused', handleJobPaused);
+            socket.off('job:resumed', handleJobResumed);
+        };
+    }, [socket, useTwoPhaseSearch, currentJobId]);
+
     const stats = {
-        total: businesses.length,
-        avgRating: businesses.length > 0
-            ? (businesses.reduce((sum, b) => sum + (b.rating || 0), 0) / businesses.length).toFixed(1)
+        total: businesses?.length || 0,
+        avgRating: (businesses?.length || 0) > 0
+            ? (businesses.reduce((sum, b) => sum + (b.rating || 0), 0) / (businesses?.length || 1)).toFixed(1)
             : 0,
-        withEmail: businesses.filter(b => b.email && b.email !== 'N/A').length,
-        withWebsite: businesses.filter(b => b.website && b.website !== 'N/A').length,
-        withPhone: businesses.filter(b => b.phone && b.phone !== 'N/A').length,
-        highlyRated: businesses.filter(b => (b.rating || 0) >= 4.5).length,
+        withEmail: (businesses || []).filter(b => b.email && b.email !== 'N/A').length,
+        withWebsite: (businesses || []).filter(b => b.website && b.website !== 'N/A').length,
+        withPhone: (businesses || []).filter(b => b.phone && b.phone !== 'N/A').length,
+        highlyRated: (businesses || []).filter(b => (b.rating || 0) >= 4.5).length,
     };
 
     const handleSearch = async (keyword, location, token, refresh = false) => {
@@ -994,9 +1078,20 @@ const Dashboard = () => {
             setIsSearching(true);
             setSelectedKeyword(keyword);
             setSelectedLocation(location);
+            setCurrentPhase(null);
+            setIsEnrichmentPaused(false);
 
             if (useAsyncSearch) {
-                const result = await createSearchJob(keyword, location, token, refresh);
+                let result;
+
+                // Use two-phase search if enabled
+                if (useTwoPhaseSearch) {
+                    result = await createTwoPhaseSearchJob(keyword, location, token, refresh);
+                    setUsePostalCodes(result.usePostalCodes || false);
+                    setCurrentPhase('collecting');
+                } else {
+                    result = await createSearchJob(keyword, location, token, refresh);
+                }
 
                 if (multiSearchMode) {
                     // Multi-search mode: Add to active jobs array and switch to it
@@ -1004,10 +1099,12 @@ const Dashboard = () => {
                         jobId: result.jobId,
                         keyword,
                         location,
-                        status: 'queued',
-                        progress: 0,
-                        businesses: [],
-                        timestamp: new Date()
+                        status: result.cached ? 'completed' : 'queued',
+                        progress: result.cached ? 100 : 0,
+                        businesses: result.cached ? result.data : [],
+                        timestamp: new Date(),
+                        useTwoPhase: useTwoPhaseSearch,
+                        usePostalCodes: result.usePostalCodes
                     };
 
                     setActiveJobs(prev => [...prev, newJob]);
@@ -1015,13 +1112,33 @@ const Dashboard = () => {
                     // Switch to the new tab immediately
                     setCurrentJobId(result.jobId);
 
-                    // Clear businesses since this is a new search
-                    setBusinesses([]);
+                    // If cached, setting businesses now will update the current view
+                    if (result.cached) {
+                        setBusinesses(result.data);
+                    } else {
+                        setBusinesses([]);
+                    }
                 } else {
                     // Single mode: Replace current job
-                    setBusinesses([]);
-                    setCurrentJobId(result.jobId);
-                    setActiveJobs([]);
+                    if (result.cached) {
+                        setBusinesses(result.data);
+                        setCurrentJobId(result.jobId);
+                        setActiveJobs([{
+                            jobId: result.jobId,
+                            keyword,
+                            location,
+                            status: 'completed',
+                            progress: 100,
+                            businesses: result.data,
+                            timestamp: new Date(),
+                            useTwoPhase: useTwoPhaseSearch,
+                            usePostalCodes: result.usePostalCodes
+                        }]);
+                    } else {
+                        setBusinesses([]);
+                        setCurrentJobId(result.jobId);
+                        setActiveJobs([]);
+                    }
                 }
             } else {
                 const result = await searchBusinesses(keyword, location, token, refresh);
@@ -1040,7 +1157,7 @@ const Dashboard = () => {
     };
 
     const handleJobComplete = (data) => {
-        setBusinesses(data);
+        setBusinesses(data || []);
         setCurrentJobId(null);
         setIsSearching(false);
     };
@@ -1050,7 +1167,47 @@ const Dashboard = () => {
         setSelectedLocation(location);
     };
 
-    const filteredBusinesses = businesses
+    // Enrichment control handlers
+    const handlePauseEnrichment = async () => {
+        if (!currentJobId) return;
+
+        try {
+            const token = await getToken();
+            await pauseEnrichment(currentJobId, token);
+            setIsEnrichmentPaused(true);
+        } catch (err) {
+            console.error('Failed to pause enrichment:', err);
+            setError('Failed to pause enrichment');
+        }
+    };
+
+    const handleResumeEnrichment = async () => {
+        if (!currentJobId) return;
+
+        try {
+            const token = await getToken();
+            await resumeEnrichment(currentJobId, token);
+            setIsEnrichmentPaused(false);
+        } catch (err) {
+            console.error('Failed to resume enrichment:', err);
+            setError('Failed to resume enrichment');
+        }
+    };
+
+    const handleSkipEnrichment = async () => {
+        if (!currentJobId) return;
+
+        try {
+            const token = await getToken();
+            await skipEnrichment(currentJobId, token);
+            setCurrentPhase('completed');
+        } catch (err) {
+            console.error('Failed to skip enrichment:', err);
+            setError('Failed to skip enrichment');
+        }
+    };
+
+    const filteredBusinesses = (businesses || [])
         .filter(b => !filterRating || (b.rating || 0) >= filterRating)
         .filter(b => priceRange === 'all' || b.priceLevel === priceRange)
         .filter(b => !openNow || b.isOpenNow)
@@ -1149,50 +1306,60 @@ const Dashboard = () => {
 
             {/* Main Content */}
             <div className="w-full px-4 lg:px-10 py-8">
-                {/* Header Section */}
-                <div className="mb-8">
-                    <div className="flex flex-wrap items-center justify-between gap-6">
-                        <div>
-                            <h2 className="text-4xl font-black text-white mb-2">
-                                Discover Quality Leads
-                            </h2>
-                            <p className="text-lg text-slate-400">
-                                Find businesses with verified contact information and social profiles
-                            </p>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <div className="flex items-center gap-3 px-5 py-3 bg-white/5 border border-white/10 rounded-xl">
-                                <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse"></div>
-                                <span className="text-sm font-semibold text-white">Live Updates</span>
-                            </div>
-                            <div className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl">
-                                <span className="text-xs font-medium text-slate-400">Search Mode:</span>
-                                <div className="inline-flex bg-white/5 rounded-lg p-0.5">
-                                    <button
-                                        onClick={() => setUseAsyncSearch(false)}
-                                        className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${!useAsyncSearch
-                                            ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/50'
-                                            : 'text-slate-400 hover:text-white'
-                                            }`}
-                                    >
-                                        Instant
-                                    </button>
-                                    <button
-                                        onClick={() => setUseAsyncSearch(true)}
-                                        className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${useAsyncSearch
-                                            ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/50'
-                                            : 'text-slate-400 hover:text-white'
-                                            }`}
-                                    >
-                                        Background
-                                    </button>
+                <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
+                    <div className="flex-1">
+                        <h2 className="text-4xl font-black text-white mb-2">
+                            Discover Quality Leads
+                        </h2>
+                        <p className="text-lg text-slate-400">
+                            Find businesses with verified contact information and social profiles
+                        </p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        {/* Recent Searches (Moved here to be visible BEFORE search) */}
+                        <div className="relative" ref={recentSearchesRef}>
+                            <button
+                                onClick={() => setShowRecentSearches(!showRecentSearches)}
+                                className="flex items-center gap-2 px-6 py-3.5 text-sm font-bold text-slate-300 bg-white/5 border border-white/10 rounded-2xl hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all shadow-xl"
+                            >
+                                <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                Recent Searches
+                                <svg className={`w-4 h-4 transition-transform ${showRecentSearches ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </button>
+
+                            {showRecentSearches && (
+                                <div className="absolute right-0 mt-2 w-96 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden backdrop-blur-xl">
+                                    <div className="p-4 border-b border-white/10 bg-gradient-to-r from-cyan-500/10 to-blue-500/10">
+                                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                            <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                            Recent Searches
+                                        </h3>
+                                    </div>
+                                    <div className="p-3 max-h-96 overflow-y-auto">
+                                        <SearchHistory onSelectHistory={(keyword, location) => {
+                                            handleSelectHistory(keyword, location);
+                                            setShowRecentSearches(false);
+                                        }} />
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
+
+                        {/* Mode Indicator/Shortcuts can go here */}
                     </div>
                 </div>
 
-                {/* Multi-Search Mode Toggle */}
+
+                {/* Sub Headers & Config */}
+                {/* Multi-Search Mode Toggle - TEMPORARILY HIDDEN */}
+                {/* 
                 <div className="mb-6">
                     <div className="flex items-center justify-between p-5 bg-gradient-to-r from-white/10 to-white/5 border border-white/10 rounded-2xl backdrop-blur-xl">
                         <div className="flex items-center gap-4">
@@ -1211,7 +1378,6 @@ const Dashboard = () => {
                             </div>
                         </div>
 
-                        {/* Toggle Switch */}
                         <button
                             onClick={() => setMultiSearchMode(!multiSearchMode)}
                             className={`relative w-16 h-8 rounded-full transition-all duration-300 ${multiSearchMode
@@ -1226,7 +1392,6 @@ const Dashboard = () => {
                         </button>
                     </div>
 
-                    {/* Mode Info Badge */}
                     {multiSearchMode && (
                         <div className="mt-3 p-3 bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20 rounded-xl">
                             <div className="flex items-center gap-2 text-sm">
@@ -1240,8 +1405,9 @@ const Dashboard = () => {
                         </div>
                     )}
                 </div>
+                */}
 
-                {/* Search Form */}
+                {/* Search Form - Full Width */}
                 <div className="mb-8">
                     <SearchForm
                         onSearch={handleSearch}
@@ -1250,8 +1416,11 @@ const Dashboard = () => {
                     />
                 </div>
 
+                {/* Active Background Processes */}
+                <ActiveJobs />
+
                 {/* Stats Dashboard */}
-                {businesses.length > 0 && (
+                {(businesses?.length || 0) > 0 && (
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
                         <div className="bg-gradient-to-br from-white/10 to-white/5 border border-white/10 rounded-2xl p-5 hover:border-white/20 transition-all group">
                             <div className="flex items-center justify-between mb-3">
@@ -1514,6 +1683,13 @@ const Dashboard = () => {
                                                     setBusinesses(data);
                                                     setIsSearching(false);
                                                 }}
+                                                useTwoPhase={useTwoPhaseSearch}
+                                                currentPhase={currentPhase}
+                                                isEnrichmentPaused={isEnrichmentPaused}
+                                                onPauseEnrichment={handlePauseEnrichment}
+                                                onResumeEnrichment={handleResumeEnrichment}
+                                                onSkipEnrichment={handleSkipEnrichment}
+                                                usePostalCodes={usePostalCodes}
                                             />
                                         </div>
                                     );
@@ -1526,7 +1702,17 @@ const Dashboard = () => {
                     /* Single Mode: Show Only Current Job */
                     currentJobId && (
                         <div className="mb-8">
-                            <JobStatus jobId={currentJobId} onComplete={handleJobComplete} />
+                            <JobStatus
+                                jobId={currentJobId}
+                                onComplete={handleJobComplete}
+                                useTwoPhase={useTwoPhaseSearch}
+                                currentPhase={currentPhase}
+                                isEnrichmentPaused={isEnrichmentPaused}
+                                onPauseEnrichment={handlePauseEnrichment}
+                                onResumeEnrichment={handleResumeEnrichment}
+                                onSkipEnrichment={handleSkipEnrichment}
+                                usePostalCodes={usePostalCodes}
+                            />
                         </div>
                     )
                 )}
@@ -1549,8 +1735,8 @@ const Dashboard = () => {
                 )}
 
                 {/* Controls Bar */}
-                {businesses.length > 0 && (
-                    <div className="bg-white/5 border border-white/10 rounded-2xl p-6 mb-8 backdrop-blur-xl">
+                {(businesses?.length || 0) > 0 && (
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-6 mb-8 backdrop-blur-xl relative z-40">
                         <div className="flex flex-wrap items-center justify-between gap-4">
                             {/* View Mode Toggle */}
                             <div className="inline-flex bg-white/5 border border-white/10 rounded-xl p-1">
@@ -1577,41 +1763,6 @@ const Dashboard = () => {
 
                             {/* Filters */}
                             <div className="flex items-center gap-3">
-                                {/* Recent Searches */}
-                                <div className="relative" ref={recentSearchesRef}>
-                                    <button
-                                        onClick={() => setShowRecentSearches(!showRecentSearches)}
-                                        className="flex items-center gap-2 px-5 py-3 text-sm font-semibold text-slate-300 border border-white/10 rounded-xl hover:border-white/20 hover:bg-white/5 transition-all"
-                                    >
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        Recent
-                                        <svg className={`w-4 h-4 transition-transform ${showRecentSearches ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                        </svg>
-                                    </button>
-
-                                    {showRecentSearches && (
-                                        <div className="absolute right-0 mt-2 w-96 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden backdrop-blur-xl">
-                                            <div className="p-4 border-b border-white/10 bg-gradient-to-r from-cyan-500/10 to-blue-500/10">
-                                                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                                    <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                                    </svg>
-                                                    Recent Searches
-                                                </h3>
-                                            </div>
-                                            <div className="p-3 max-h-96 overflow-y-auto">
-                                                <SearchHistory onSelectHistory={(keyword, location) => {
-                                                    handleSelectHistory(keyword, location);
-                                                    setShowRecentSearches(false);
-                                                }} />
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-
                                 <select
                                     value={filterRating}
                                     onChange={(e) => setFilterRating(Number(e.target.value))}
@@ -1687,7 +1838,7 @@ const Dashboard = () => {
                                         </label>
                                         <div className="px-4 py-3 border border-white/10 rounded-xl bg-white/5">
                                             <span className="text-sm font-bold text-white">
-                                                {filteredBusinesses.length} of {businesses.length} leads
+                                                {filteredBusinesses?.length || 0} of {businesses?.length || 0} leads
                                             </span>
                                         </div>
                                     </div>
@@ -1697,8 +1848,8 @@ const Dashboard = () => {
                     </div>
                 )}
 
-                {/* Main Content Area */}
-                {businesses.length > 0 ? (
+                {/* Content Sections */}
+                {(businesses?.length || 0) > 0 ? (
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                         {/* Business Cards/Table */}
                         <div className="xl:col-span-2">
@@ -1706,7 +1857,7 @@ const Dashboard = () => {
                                 <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-xl">
                                     <div className="p-6 border-b border-white/10 bg-gradient-to-r from-cyan-500/10 to-blue-500/10">
                                         <h3 className="text-xl font-black text-white">
-                                            {filteredBusinesses.length} Leads Found
+                                            {filteredBusinesses?.length || 0} Leads Found
                                         </h3>
                                         {selectedKeyword && selectedLocation && (
                                             <p className="text-sm text-slate-400 mt-1">
@@ -1728,13 +1879,18 @@ const Dashboard = () => {
                                             Map View
                                         </h3>
                                     </div>
-                                    <div className="h-[700px]">
-                                        <BusinessMap businesses={filteredBusinesses} />
+                                    <div className="h-[700px] flex items-center justify-center bg-slate-900 border border-white/5 rounded-xl">
+                                        <div className="text-center p-8">
+                                            <div className="text-4xl mb-4">🗺️</div>
+                                            <p className="text-slate-400 font-bold">Map Disabled</p>
+                                            <p className="text-slate-500 text-sm mt-1">interactive map is disabled to prevent crashes due to invalid API key.</p>
+                                        </div>
+                                        {/* <BusinessMap businesses={filteredBusinesses} /> */}
                                     </div>
                                 </div>
                             ) : (
                                 <div className="space-y-4">
-                                    {filteredBusinesses.map((business, index) => (
+                                    {(filteredBusinesses || []).map((business, index) => (
                                         <div
                                             key={index}
                                             onClick={() => setSelectedBusiness(business)}
@@ -1925,7 +2081,7 @@ const Dashboard = () => {
                                                                 business={business}
                                                                 onScanComplete={(updatedBusiness, scanResults) => {
                                                                     // Update the business in the list
-                                                                    const updatedBusinesses = businesses.map(b =>
+                                                                    const updatedBusinesses = (businesses || []).map(b =>
                                                                         b._id === updatedBusiness._id ? updatedBusiness : b
                                                                     );
                                                                     setBusinesses(updatedBusinesses);
@@ -1952,8 +2108,13 @@ const Dashboard = () => {
                                         Location Map
                                     </h3>
                                 </div>
-                                <div className="h-[600px]">
-                                    <BusinessMap businesses={filteredBusinesses} />
+                                <div className="h-[600px] flex items-center justify-center bg-slate-900 border border-white/5 rounded-xl">
+                                    <div className="text-center p-8">
+                                        <div className="text-4xl mb-4">🗺️</div>
+                                        <p className="text-slate-400 font-bold">Map Disabled</p>
+                                        <p className="text-slate-500 text-sm mt-1">interactive map is disabled to prevent crashes.</p>
+                                    </div>
+                                    {/* <BusinessMap businesses={filteredBusinesses} /> */}
                                 </div>
                             </div>
                         </div>

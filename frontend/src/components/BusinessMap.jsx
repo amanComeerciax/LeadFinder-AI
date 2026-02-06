@@ -168,7 +168,20 @@ const BusinessMap = ({ businesses }) => {
     const centerLng = businessesWithCoords.reduce((sum, b) => sum + parseFloat(b.longitude), 0) / businessesWithCoords.length;
 
     // Google Maps API key from environment
-    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'YOUR_API_KEY';
+    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+    const isInvalidKey = !apiKey || apiKey === 'YOUR_API_KEY' || apiKey.includes('AIza') === false || apiKey.length < 20;
+
+    if (isInvalidKey) {
+        return (
+            <div className="h-full flex items-center justify-center bg-slate-900 border border-white/5 rounded-xl">
+                <div className="text-center p-8">
+                    <div className="text-4xl mb-4">🗺️</div>
+                    <p className="text-slate-400 font-bold">Map Preview Unavailable</p>
+                    <p className="text-slate-500 text-sm mt-1">Please provide a valid Google Maps API Key in .env to enable the map.</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="h-full w-full relative">

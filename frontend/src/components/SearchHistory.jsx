@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@clerk/clerk-react';
-import { getSearchHistory } from '../api/business.api';
+import { getSearchHistory, deleteSearchHistory as deleteHistoryAPI } from '../api/business.api';
 
 const SearchHistory = ({ onSelectHistory }) => {
     const { getToken, isSignedIn } = useAuth();
@@ -15,13 +15,30 @@ const SearchHistory = ({ onSelectHistory }) => {
         try {
             setLoading(true);
             const token = isSignedIn ? await getToken() : null;
-            const result = await getSearchHistory(5, token);
+            const result = await getSearchHistory(10, token); // Increased limit slightly
             setHistory(result.data);
         } catch (error) {
             console.error('Failed to fetch history:', error);
             setHistory([]);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleDeleteHistory = async (e, id) => {
+        e.stopPropagation(); // Prevent onSelectHistory
+
+        if (!window.confirm('Are you sure you want to delete this search history entry?')) {
+            return;
+        }
+
+        try {
+            const token = isSignedIn ? await getToken() : null;
+            await deleteHistoryAPI(id, token);
+            setHistory(prev => prev.filter(item => item._id !== id));
+        } catch (error) {
+            console.error('Failed to delete history:', error);
+            alert('Failed to delete history entry');
         }
     };
 
@@ -61,9 +78,9 @@ const SearchHistory = ({ onSelectHistory }) => {
         <div className="space-y-1">
             {history.map((item, index) => (
                 <div
-                    key={index}
+                    key={item._id || index}
                     onClick={() => onSelectHistory(item.keyword, item.location)}
-                    className="group flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-800/20 transition-colors"
+                    className="group flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-800/20 transition-colors relative"
                 >
                     {/* Icon */}
                     <div className="w-10 h-10 bg-gray-100 dark:bg-gray-800 group-hover:bg-slate-800 dark:group-hover:bg-slate-800/30 rounded-lg flex items-center justify-center transition-colors">
@@ -95,10 +112,21 @@ const SearchHistory = ({ onSelectHistory }) => {
                         </div>
                     </div>
 
-                    {/* Arrow */}
-                    <svg className="w-4 h-4 text-gray-400 group-hover:text-slate-700 dark:group-hover:text-slate-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
+                    {/* Actions container */}
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                            onClick={(e) => handleDeleteHistory(e, item._id)}
+                            className="p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-500/10 transition-all"
+                            title="Delete History"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </button>
+                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                    </div>
                 </div>
             ))}
         </div>

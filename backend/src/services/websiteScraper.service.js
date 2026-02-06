@@ -6,7 +6,7 @@ import * as cheerio from 'cheerio';
 // ============================================================================
 let globalBrowser = null;
 let activePagesCount = 0;
-const MAX_CONCURRENT_PAGES = 10;
+const MAX_CONCURRENT_PAGES = 15;
 
 const getBrowser = async () => {
     if (!globalBrowser || !globalBrowser.isConnected()) {
@@ -20,10 +20,10 @@ const getBrowser = async () => {
                     '--disable-accelerated-2d-canvas',
                     '--no-first-run',
                     '--no-zygote',
-                    '--single-process',
                     '--disable-gpu',
                     '--disable-software-rasterizer',
-                    '--disable-extensions'
+                    '--disable-extensions',
+                    '--window-size=1280,720'
                 ],
                 defaultViewport: { width: 1280, height: 720 }
             });
@@ -45,7 +45,7 @@ const getBrowser = async () => {
 /**
  * Managed page wrapper to handle cleanup and concurrency
  */
-const withPage = async (fn, timeout = 45000) => {
+const withPage = async (fn, timeout = 45000, retryCount = 1) => {
     // Wait if too many pages are active
     let waitCount = 0;
     while (activePagesCount >= MAX_CONCURRENT_PAGES && waitCount < 100) {
@@ -54,10 +54,23 @@ const withPage = async (fn, timeout = 45000) => {
     }
 
     let page = null;
+    let browser = null;
     try {
         activePagesCount++;
-        const browser = await getBrowser();
-        page = await browser.newPage();
+        browser = await getBrowser();
+
+        try {
+            page = await browser.newPage();
+        } catch (e) {
+            if (e.message.includes('Target closed') || e.message.includes('disconnected')) {
+                console.warn('⚠️ [withPage] Browser died while opening page. Restarting...');
+                globalBrowser = null;
+                activePagesCount--; // Rollback for the retry
+                if (retryCount > 0) return await withPage(fn, timeout, retryCount - 1);
+                throw e;
+            }
+            throw e;
+        }
 
         page.setDefaultTimeout(timeout);
         page.setDefaultNavigationTimeout(timeout);
@@ -78,6 +91,12 @@ const withPage = async (fn, timeout = 45000) => {
         return await fn(page);
 
     } catch (error) {
+        if ((error.message.includes('Target closed') || error.message.includes('disconnected')) && retryCount > 0) {
+            console.warn(`⚠️ [withPage] Protocol error occurred: ${error.message}. Retrying...`);
+            globalBrowser = null;
+            activePagesCount--; // Rollback for the retry
+            return await withPage(fn, timeout, retryCount - 1);
+        }
         throw error;
     } finally {
         if (page) {
@@ -278,7 +297,7 @@ const extractFromHtml = (html, baseUrl) => {
 // ============================================================================
 // MAIN SCRAPER
 // ============================================================================
-export const extractContacts = async (url) => {
+export const extractContacts = async (url, checkCancellation = null, jobId = null) => {
     if (!url || url === 'N/A') return { email: null, socialLinks: {} };
 
     // Standardize URL
@@ -299,14 +318,30 @@ export const extractContacts = async (url) => {
 
         // 1. SCRAPE HOMEPAGE
         const homepageData = await withPage(async (page) => {
+            if (checkCancellation && await checkCancellation()) {
+                throw new Error('CANCELLED');
+            }
             await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
             await new Promise(r => setTimeout(r, 1000));
+            if (checkCancellation && await checkCancellation()) {
+                throw new Error('CANCELLED');
+            }
             return await page.content();
         });
 
         const { emails: homeEmails, socialLinks: homeSocial } = extractFromHtml(homepageData, targetUrl);
         homeEmails.forEach(e => allEmails.add(e));
         finalSocialLinks = { ...homeSocial };
+
+        // Optimization: If we found emails and some social links, maybe we can skip subpages?
+        // But users want thorough scan, so we'll continue unless we found MANY emails.
+        if (allEmails.size >= 3 && Object.values(finalSocialLinks).every(l => l !== null)) {
+            console.log(`[Scraper] Found ${allEmails.size} emails on homepage. Skipping further scan.`);
+            return {
+                email: Array.from(allEmails).join(', '),
+                socialLinks: finalSocialLinks
+            };
+        }
 
         // 2. CHECK COMMON SUBDOMAINS (contact.domain.com, info.domain.com, etc.)
         const internalLinks = new Set();
@@ -318,8 +353,13 @@ export const extractContacts = async (url) => {
         const commonSubdomains = ['contact', 'info', 'support', 'help', 'team', 'about'];
 
         console.log(`[Scraper] Checking subdomains for: ${baseDomain}`);
-
         for (const subdomain of commonSubdomains) {
+            // Check for cancellation before each subdomain probe
+            if (checkCancellation && await checkCancellation()) {
+                console.log(`🛑 [Scraper] [Job:${jobId}] Cancelled during subdomain check`);
+                return { email: null, socialLinks: {} };
+            }
+
             const subdomainUrl = `${protocol}//${subdomain}.${baseDomain}`;
             try {
                 // Quick probe to see if subdomain exists
@@ -385,6 +425,11 @@ export const extractContacts = async (url) => {
         console.log(`[Scraper] Found ${internalLinks.size} potential pages, scraping top ${pagesToScrape.length}...`);
 
         for (const pageUrl of pagesToScrape) {
+            // Check for cancellation before each subpage scrape
+            if (checkCancellation && await checkCancellation()) {
+                console.log(`🛑 [Scraper] [Job:${jobId}] Cancelled during subpage scrape`);
+                break;
+            }
             try {
                 const pageData = await withPage(async (page) => {
                     await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });

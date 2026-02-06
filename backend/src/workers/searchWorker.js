@@ -38,10 +38,12 @@ const searchWorker = new Worker(
             // Step 1: Scrape Google Maps
             const rawBusinesses = await searchBusinesses(keyword, location);
 
-            // Use all businesses directly (no Bloom filter)
-            const businesses = rawBusinesses;
+            // Deduplicate by place_id immediately
+            const businesses = Array.from(
+                new Map(rawBusinesses.map(b => [b.place_id, b])).values()
+            ).filter(b => b.place_id);
 
-            console.log(`Total businesses fetched: ${businesses.length}`);
+            console.log(`Total unique businesses fetched: ${businesses.length}`);
 
             await job.updateProgress(40);
             await Job.findOneAndUpdate({ jobId }, { progress: 40 });
@@ -65,6 +67,12 @@ const searchWorker = new Worker(
             console.log(`🔍 Starting DEEP SCAN for ${businesses.length} businesses (including subpages)...`);
 
             for (let i = 0; i < businesses.length; i += chunkSize) {
+                const currentJob = await Job.findOne({ jobId });
+                if (currentJob && currentJob.status === 'cancelled') {
+                    console.log(`🛑 [Worker] Job ${jobId} cancelled. Stopping enrichment.`);
+                    return { success: false, status: 'cancelled' };
+                }
+
                 const chunk = businesses.slice(i, i + chunkSize);
                 const currentProgress = 40 + Math.floor((i / businesses.length) * 50); // Extended to 50% for deep scan
 
@@ -86,12 +94,15 @@ const searchWorker = new Worker(
                     chunk.map(async (business) => {
                         if (business.website && business.website !== 'N/A') {
                             try {
-                                console.log(`[Worker] 🔍 Deep Scanning: ${business.name} (${business.website})`);
-                                // extractContacts already does deep scanning with Puppeteer
-                                // It crawls homepage + /contact, /about, /team, etc.
-                                const contacts = await extractContacts(business.website);
+                                // Frequent cancellation check
+                                const checkCancellation = async () => {
+                                    const currentJob = await Job.findOne({ jobId });
+                                    return currentJob && currentJob.status === 'cancelled';
+                                };
 
-                                // Properly merge socialLinks into business object
+                                console.log(`[Worker] 🔍 Deep Scanning: ${business.name} (${business.website})`);
+                                const contacts = await extractContacts(business.website, checkCancellation, jobId);
+
                                 return {
                                     ...business,
                                     email: contacts.email || business.email || null,
@@ -102,7 +113,6 @@ const searchWorker = new Worker(
                                         instagram: contacts.socialLinks?.instagram || null,
                                         youtube: contacts.socialLinks?.youtube || null,
                                     },
-                                    // Also add flat fields for easier frontend access
                                     facebookUrl: contacts.socialLinks?.facebook || null,
                                     twitterUrl: contacts.socialLinks?.twitter || null,
                                     linkedinUrl: contacts.socialLinks?.linkedin || null,
@@ -151,9 +161,9 @@ const searchWorker = new Worker(
                         }
                     }));
 
-                    const result = await Business.bulkWrite(bulkOps, { ordered: false });
-                    savedCount = (result.upsertedCount || 0) + (result.modifiedCount || 0);
-                    console.log(`Bulk write successful. Upserted: ${result.upsertedCount}, Modified: ${result.modifiedCount}`);
+                    await Business.bulkWrite(bulkOps, { ordered: false });
+                    savedCount = uniqueBusinesses.length;
+                    console.log(`Bulk write successful. Found ${savedCount} unique businesses`);
                 } catch (e) {
                     console.error("Bulk write error:", e.message);
                 }
@@ -175,7 +185,7 @@ const searchWorker = new Worker(
                 userId,
                 keyword,
                 location,
-                resultsCount: savedCount,
+                resultsCount: businesses.length,
             });
 
             await job.updateProgress(100);
@@ -184,7 +194,7 @@ const searchWorker = new Worker(
                 {
                     status: 'completed',
                     progress: 100,
-                    resultsCount: savedCount,
+                    resultsCount: businesses.length,
                     completedAt: new Date(),
                 }
             );
@@ -193,7 +203,7 @@ const searchWorker = new Worker(
             if (io) {
                 io.emit('job:completed', {
                     jobId,
-                    resultsCount: savedCount,
+                    resultsCount: businesses.length,
                     data: enrichedBusinesses
                 });
             }
